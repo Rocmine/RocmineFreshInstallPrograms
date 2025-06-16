@@ -1,6 +1,6 @@
 # 🚀 Rocmine's Program Installer
 
-Quick setup guide for automatically installing essential Windows programs using PowerShell and winget.
+Quick setup guide for automatically installing essential Windows programs using PowerShell and winget for rocmine, free to use.
 
 ## ⚡ Quick Start
 
