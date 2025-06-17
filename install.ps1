@@ -87,7 +87,7 @@ $Stats = @{
 function Write-ColoredBanner {
     param([string]$Text, [string]$Color = 'Cyan')
     
-    $border = '═' * 60
+    $border = '=' * 60
     Clear-Host
     Write-Host $border -ForegroundColor $Color
     Write-Host ("  {0,-54}  " -f $Text) -ForegroundColor White -BackgroundColor DarkBlue
@@ -311,7 +311,7 @@ function Show-InstallationSummary {
 
 # Main execution
 try {
-    Write-ColoredBanner "Rocmine's Automated Program Installer"
+    Write-ColoredBanner "Rocmine Program Installer"
     
     Write-Host "`n🔍 Checking system requirements..." -ForegroundColor Cyan
     if (-not (Test-WingetAvailability)) {
@@ -334,7 +334,26 @@ try {
     if (-not $SkipConfirmation) {
         Write-Host "`n❓ " -NoNewline -ForegroundColor Yellow
         $confirmation = Read-Host "Proceed with installation? (Y/n)"
-        if ($confirmation -match '^n(o)?
+        if ($confirmation -match '^n(o)?$') {
+            Write-Host "Installation cancelled by user." -ForegroundColor Yellow
+            exit 0
+        }
+    }
+    
+    Write-Host "`n🚀 Starting installation process..." -ForegroundColor Green
+    Start-Sleep -Seconds 2
+    
+    # Install CascadiaCode Nerd Font first
+    $fontInstalled = Install-CascadiaCodeFont
+    
+    $current = 0
+    foreach ($package in $SelectedPackages) {
+        $current++
+        
+        Write-ColoredBanner "Installing Applications ($current/$($Stats.Total))"
+        Write-ProgressInfo -PackageName $package.Display -Current $current -Total $Stats.Total
+        
+        $exitCode = Install-Package -PackageName $package.Name
         
         if ($exitCode -eq 0) {
             $Stats.Successful++
@@ -364,62 +383,7 @@ try {
     }
     
     Write-Host "`n🎉 Installation process completed!" -ForegroundColor Green
-    Write-Host "Thank you for using Rocmine's Program Installer!" -ForegroundColor Magenta
-}
-catch {
-    Write-Host "`n💥 Critical error occurred: $($_.Exception.Message)" -ForegroundColor Red
-    exit 1
-}
-finally {
-    Write-Host "`nPress any key to exit..." -ForegroundColor Gray
-    $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
-}
-}) {
-            Write-Host "Installation cancelled by user." -ForegroundColor Yellow
-            exit 0
-        }
-    }
-    
-    Write-Host "`n🚀 Starting installation process..." -ForegroundColor Green
-    Start-Sleep -Seconds 2
-    
-    # Install CascadiaCode Nerd Font first
-    $fontInstalled = Install-CascadiaCodeFont
-    
-    $current = 0
-    foreach ($package in $SelectedPackages) {
-        $current++
-        
-        Write-ColoredBanner "Installing Applications ($current/$($Stats.Total))"
-        Write-ProgressInfo -PackageName $package.Display -Current $current -Total $Stats.Total
-        
-        $exitCode = Install-Package -PackageName $package.Name
-        
-        if ($exitCode -eq 0) {
-            $Stats.Successful++
-            Write-Host "`n✓ Successfully installed: $package" -ForegroundColor Green
-        }
-        elseif ($exitCode -eq -1978335189) {
-            $Stats.Skipped++
-            Write-Host "`n⊘ Already installed: $package" -ForegroundColor Yellow
-        }
-        else {
-            $Stats.Failed++
-            Write-Host "`n✗ Failed to install: $package (Exit code: $exitCode)" -ForegroundColor Red
-            
-            if (-not $ContinueOnError) {
-                Write-Host "Stopping installation due to error. Use -ContinueOnError to skip failures." -ForegroundColor Yellow
-                break
-            }
-        }
-        
-        Start-Sleep -Milliseconds 500
-    }
-    
-    Show-InstallationSummary
-    
-    Write-Host "`n🎉 Installation process completed!" -ForegroundColor Green
-    Write-Host "Thank you for using Rocmine's Program Installer!" -ForegroundColor Magenta
+    Write-Host "Thank you for using Rocmine Program Installer!" -ForegroundColor Magenta
 }
 catch {
     Write-Host "`n💥 Critical error occurred: $($_.Exception.Message)" -ForegroundColor Red
