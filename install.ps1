@@ -373,6 +373,7 @@ catch {
 finally {
     Write-Host "`nPress any key to exit..." -ForegroundColor Gray
     $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+}
 }) {
             Write-Host "Installation cancelled by user." -ForegroundColor Yellow
             exit 0
