@@ -60,7 +60,7 @@ $PackageCategories = @{
     'System Components' = @(
         @{Name='Microsoft.VCRedist.2015+.x86'; Display='Visual C++ Redistributable (x86)'; Selected=$true},
         @{Name='Microsoft.VCRedist.2015+.x64'; Display='Visual C++ Redistributable (x64)'; Selected=$true},
-        @{Name='equalizerapo'; Display='Equalizer APO'; Selected=$false}
+        @{Name='Microsoft.DirectX'; Display='DirectX Runtime'; Selected=$false}
     )
     'Network & Security' = @(
         @{Name='angryziber.AngryIPScanner'; Display='Angry IP Scanner'; Selected=$false},
@@ -102,7 +102,7 @@ function Write-ProgressInfo {
         [string]$Status = 'Installing'
     )
     
-    $percentComplete = [math]::Round(($Current / $Total) * 100, 1)
+    $percentComplete = if ($Total -gt 0) { [math]::Round(($Current / $Total) * 100, 1) } else { 0 }
     $progressBar = ('█' * [math]::Floor($percentComplete / 4)) + ('░' * (25 - [math]::Floor($percentComplete / 4)))
     
     Write-Host "`n┌─ Package Progress ─────────────────────────────────────┐" -ForegroundColor DarkGray
@@ -113,14 +113,20 @@ function Write-ProgressInfo {
 
 function Test-WingetAvailability {
     try {
-        $null = Get-Command winget -ErrorAction Stop
-        $wingetVersion = (winget --version).Trim('v')
-        Write-Host "✓ Winget found (Version: $wingetVersion)" -ForegroundColor Green
-        return $true
+        $wingetCommand = Get-Command winget -ErrorAction Stop
+        $wingetOutput = & winget --version 2>$null
+        if ($wingetOutput) {
+            $wingetVersion = $wingetOutput.ToString().Trim('v')
+            Write-Host "✓ Winget found (Version: $wingetVersion)" -ForegroundColor Green
+            return $true
+        } else {
+            throw "Winget command failed"
+        }
     }
     catch {
         Write-Host "✗ Winget not found or not accessible" -ForegroundColor Red
-        Write-Host "Please install Windows Package Manager from Microsoft Store" -ForegroundColor Yellow
+        Write-Host "Please install Windows Package Manager from Microsoft Store or GitHub" -ForegroundColor Yellow
+        Write-Host "GitHub: https://github.com/microsoft/winget-cli/releases" -ForegroundColor Blue
         return $false
     }
 }
@@ -137,7 +143,7 @@ function Install-Package {
     )
     
     try {
-        $process = Start-Process -FilePath 'winget' -ArgumentList $installArgs -NoNewWindow -Wait -PassThru -RedirectStandardError 'NUL'
+        $process = Start-Process -FilePath 'winget' -ArgumentList $installArgs -NoNewWindow -Wait -PassThru -RedirectStandardOutput 'NUL' -RedirectStandardError 'NUL'
         return $process.ExitCode
     }
     catch {
@@ -150,55 +156,136 @@ function Install-CascadiaCodeFont {
     Write-Host "`n🔤 Installing CascadiaCode Nerd Font..." -ForegroundColor Cyan
     
     try {
-        # Download CascadiaCode Nerd Font
-        $fontUrl = "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.1.1/CascadiaCode.zip"
-        $tempPath = "$env:TEMP\CascadiaCode.zip"
-        $extractPath = "$env:TEMP\CascadiaCode"
-        
-        Write-Host "   Downloading font..." -ForegroundColor Yellow
-        Invoke-WebRequest -Uri $fontUrl -OutFile $tempPath -UseBasicParsing
-        
-        Write-Host "   Extracting font files..." -ForegroundColor Yellow
-        Expand-Archive -Path $tempPath -DestinationPath $extractPath -Force
-        
-        # Install fonts
-        $shell = New-Object -ComObject Shell.Application
-        $fontsFolder = $shell.Namespace(0x14)  # Special folder for Fonts
-        
-        $fontFiles = Get-ChildItem -Path $extractPath -Filter "*.ttf" | Where-Object { $_.Name -like "*Regular*" -or $_.Name -like "*Bold*" }
-        
-        foreach ($fontFile in $fontFiles) {
-            Write-Host "   Installing: $($fontFile.Name)" -ForegroundColor Yellow
-            $fontsFolder.CopyHere($fontFile.FullName, 0x10)
+        # Check if already installed
+        $installedFonts = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts" -ErrorAction SilentlyContinue
+        if ($installedFonts -and ($installedFonts.PSObject.Properties | Where-Object { $_.Name -like "*CascadiaCode*" -or $_.Name -like "*CaskaydiaCove*" })) {
+            Write-Host "✓ CascadiaCode Nerd Font already installed" -ForegroundColor Green
+            return $true
         }
         
-        # Configure Windows Terminal to use the font
+        # Create temp directory
+        $tempDir = Join-Path $env:TEMP "CascadiaCode_$(Get-Random)"
+        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+        
+        # Download CascadiaCode Nerd Font
+        $fontUrl = "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.1.1/CascadiaCode.zip"
+        $tempPath = Join-Path $tempDir "CascadiaCode.zip"
+        $extractPath = Join-Path $tempDir "extracted"
+        
+        Write-Host "   Downloading font..." -ForegroundColor Yellow
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri $fontUrl -OutFile $tempPath -UseBasicParsing -UserAgent "PowerShell/5.1"
+        }
+        catch {
+            Write-Host "   Failed to download font: $($_.Exception.Message)" -ForegroundColor Red
+            return $false
+        }
+        
+        Write-Host "   Extracting font files..." -ForegroundColor Yellow
+        try {
+            Expand-Archive -Path $tempPath -DestinationPath $extractPath -Force
+        }
+        catch {
+            Write-Host "   Failed to extract font: $($_.Exception.Message)" -ForegroundColor Red
+            return $false
+        }
+        
+        # Install fonts using Add-Type
+        Add-Type -AssemblyName System.Drawing
+        $fonts = New-Object System.Drawing.Text.PrivateFontCollection
+        
+        # Get font files
+        $fontFiles = Get-ChildItem -Path $extractPath -Filter "*.ttf" -Recurse | Where-Object { 
+            $_.Name -match "(Regular|Bold)" -and $_.Name -notmatch "(Italic|Light|Thin)" 
+        }
+        
+        if ($fontFiles.Count -eq 0) {
+            Write-Host "   No suitable font files found" -ForegroundColor Red
+            return $false
+        }
+        
+        # Install fonts by copying to Fonts directory
+        $fontsPath = [Environment]::GetFolderPath("Fonts")
+        $installedCount = 0
+        
+        foreach ($fontFile in $fontFiles) {
+            try {
+                $destPath = Join-Path $fontsPath $fontFile.Name
+                if (-not (Test-Path $destPath)) {
+                    Copy-Item $fontFile.FullName $destPath -Force
+                    $installedCount++
+                    Write-Host "   Installed: $($fontFile.Name)" -ForegroundColor Yellow
+                }
+            }
+            catch {
+                Write-Host "   Failed to install: $($fontFile.Name)" -ForegroundColor Red
+            }
+        }
+        
+        # Register fonts in registry (for system recognition)
+        try {
+            foreach ($fontFile in $fontFiles) {
+                $fontName = [System.Drawing.FontFamily]::new($fontFile.FullName).Name
+                if ($fontName) {
+                    $regName = "$fontName (TrueType)"
+                    $regValue = $fontFile.Name
+                    Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts" -Name $regName -Value $regValue -ErrorAction SilentlyContinue
+                }
+            }
+        }
+        catch {
+            # Font registration failed, but files are copied
+        }
+        
+        # Configure Windows Terminal if available
         $terminalSettingsPath = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
         
         if (Test-Path $terminalSettingsPath) {
-            Write-Host "   Configuring Windows Terminal..." -ForegroundColor Yellow
-            $settings = Get-Content $terminalSettingsPath -Raw | ConvertFrom-Json
-            
-            # Set the font for all profiles
-            if ($settings.profiles -and $settings.profiles.defaults) {
+            try {
+                Write-Host "   Configuring Windows Terminal..." -ForegroundColor Yellow
+                $settingsContent = Get-Content $terminalSettingsPath -Raw -Encoding UTF8
+                $settings = $settingsContent | ConvertFrom-Json
+                
+                # Ensure defaults exist
+                if (-not $settings.profiles) {
+                    $settings | Add-Member -NotePropertyName "profiles" -NotePropertyValue @{} -Force
+                }
+                if (-not $settings.profiles.defaults) {
+                    $settings.profiles | Add-Member -NotePropertyName "defaults" -NotePropertyValue @{} -Force
+                }
+                
+                # Set the font
                 $settings.profiles.defaults | Add-Member -NotePropertyName "font" -NotePropertyValue @{
                     face = "CaskaydiaCove Nerd Font"
                     size = 11
                 } -Force
+                
+                $updatedSettings = $settings | ConvertTo-Json -Depth 10 -Compress:$false
+                Set-Content -Path $terminalSettingsPath -Value $updatedSettings -Encoding UTF8
             }
-            
-            $settings | ConvertTo-Json -Depth 10 | Set-Content $terminalSettingsPath
+            catch {
+                Write-Host "   Warning: Could not configure Windows Terminal" -ForegroundColor Yellow
+            }
         }
         
         # Cleanup
-        Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
-        Remove-Item $extractPath -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
         
-        Write-Host "✓ CascadiaCode Nerd Font installed successfully!" -ForegroundColor Green
-        return $true
+        if ($installedCount -gt 0) {
+            Write-Host "✓ CascadiaCode Nerd Font installed successfully! ($installedCount files)" -ForegroundColor Green
+            return $true
+        } else {
+            Write-Host "⚠️  Font files may already be installed" -ForegroundColor Yellow
+            return $true
+        }
     }
     catch {
         Write-Host "✗ Failed to install CascadiaCode Nerd Font: $($_.Exception.Message)" -ForegroundColor Red
+        # Cleanup on error
+        if ($tempDir -and (Test-Path $tempDir)) {
+            Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
         return $false
     }
 }
@@ -208,10 +295,11 @@ function Show-PackageSelector {
     
     Write-Host "`n📦 Select packages to install:" -ForegroundColor Cyan
     Write-Host "   Use SPACE to toggle, ENTER to continue, A to select all, N to select none" -ForegroundColor Gray
+    Write-Host "   Use UP/DOWN arrows to navigate, Q to quit" -ForegroundColor Gray
     Write-Host ""
     
     $allPackages = @()
-    foreach ($category in $PackageCategories.Keys) {
+    foreach ($category in $PackageCategories.Keys | Sort-Object) {
         foreach ($package in $PackageCategories[$category]) {
             $allPackages += [PSCustomObject]@{
                 Category = $category
@@ -222,14 +310,26 @@ function Show-PackageSelector {
         }
     }
     
+    if ($allPackages.Count -eq 0) {
+        Write-Host "No packages available for selection." -ForegroundColor Red
+        return @()
+    }
+    
     $currentSelection = 0
-    $maxDisplay = [Math]::Min(20, $allPackages.Count)
+    $maxDisplay = [Math]::Min(15, $allPackages.Count)
     $scrollOffset = 0
     
     do {
-        # Clear the selection area
-        $currentPos = $Host.UI.RawUI.CursorPosition
-        $Host.UI.RawUI.CursorPosition = @{X=0; Y=$currentPos.Y}
+        # Calculate scroll bounds
+        if ($currentSelection -lt $scrollOffset) { 
+            $scrollOffset = $currentSelection 
+        }
+        if ($currentSelection -ge ($scrollOffset + $maxDisplay)) { 
+            $scrollOffset = $currentSelection - $maxDisplay + 1 
+        }
+        
+        # Clear and redraw
+        $startY = $Host.UI.RawUI.CursorPosition.Y
         
         # Display packages
         for ($i = 0; $i -lt $maxDisplay; $i++) {
@@ -246,24 +346,32 @@ function Show-PackageSelector {
                 default { 'White' }
             }
             
-            $line = "{0}{1} {2} - {3}" -f $highlight, $prefix, $package.Display, $package.Category
-            Write-Host ("{0,-80}" -f $line) -ForegroundColor $color
+            $line = "{0}{1} {2} ({3})" -f $highlight, $prefix, $package.Display, $package.Category
+            Write-Host ("{0,-78}" -f $line) -ForegroundColor $color
         }
         
-        # Show navigation info
+        # Show scroll indicator if needed
+        if ($allPackages.Count -gt $maxDisplay) {
+            $scrollPercent = [math]::Round(($scrollOffset / ($allPackages.Count - $maxDisplay)) * 100)
+            Write-Host "[$scrollPercent% - Scroll: $($scrollOffset+1)-$([math]::Min($scrollOffset + $maxDisplay, $allPackages.Count)) of $($allPackages.Count)]" -ForegroundColor DarkGray
+        }
+        
+        # Navigation info
         Write-Host "`n[$($currentSelection + 1)/$($allPackages.Count)] " -NoNewline -ForegroundColor DarkGray
-        Write-Host "SPACE=Toggle, A=All, N=None, ENTER=Continue, Q=Quit" -ForegroundColor Gray
+        Write-Host "SPACE=Toggle | A=All | N=None | ENTER=Continue | Q=Quit" -ForegroundColor Gray
+        Write-Host -NoNewline # Position cursor for input
         
         $key = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+        
+        # Move cursor back to start of display area
+        $Host.UI.RawUI.CursorPosition = @{X=0; Y=$startY}
         
         switch ($key.VirtualKeyCode) {
             38 { # Up arrow
                 $currentSelection = [Math]::Max(0, $currentSelection - 1)
-                if ($currentSelection -lt $scrollOffset) { $scrollOffset = [Math]::Max(0, $scrollOffset - 1) }
             }
             40 { # Down arrow
                 $currentSelection = [Math]::Min($allPackages.Count - 1, $currentSelection + 1)
-                if ($currentSelection -ge ($scrollOffset + $maxDisplay)) { $scrollOffset = $currentSelection - $maxDisplay + 1 }
             }
             32 { # Space - Toggle selection
                 $allPackages[$currentSelection].Selected = !$allPackages[$currentSelection].Selected
@@ -283,13 +391,10 @@ function Show-PackageSelector {
             }
         }
         
-        # Move cursor back up to redraw
-        $Host.UI.RawUI.CursorPosition = @{X=0; Y=$currentPos.Y}
-        
     } while ($true)
     
     # Return selected packages
-    return $allPackages | Where-Object { $_.Selected }
+    return ($allPackages | Where-Object { $_.Selected })
 }
 
 function Show-InstallationSummary {
@@ -314,7 +419,19 @@ try {
     Write-ColoredBanner "Rocmine Program Installer"
     
     Write-Host "`n🔍 Checking system requirements..." -ForegroundColor Cyan
+    
+    # Check if running as administrator
+    $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")
+    if (-not $isAdmin) {
+        Write-Host "⚠️  Warning: Not running as Administrator. Some installations may fail." -ForegroundColor Yellow
+        Write-Host "   Consider running as Administrator for better compatibility." -ForegroundColor Gray
+    } else {
+        Write-Host "✓ Running as Administrator" -ForegroundColor Green
+    }
+    
     if (-not (Test-WingetAvailability)) {
+        Write-Host "`nPress any key to exit..." -ForegroundColor Gray
+        $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
         exit 1
     }
     
@@ -324,12 +441,23 @@ try {
     
     if ($Stats.Total -eq 0) {
         Write-Host "`n⚠️  No packages selected. Exiting..." -ForegroundColor Yellow
+        Write-Host "`nPress any key to exit..." -ForegroundColor Gray
+        $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
         exit 0
     }
     
+    Clear-Host
+    Write-ColoredBanner "Installation Configuration"
     Write-Host "`n📋 Configuration:" -ForegroundColor Cyan
     Write-Host ("   • Selected packages: {0}" -f $Stats.Total) -ForegroundColor White
     Write-Host ("   • Continue on error: {0}" -f $ContinueOnError) -ForegroundColor White
+    Write-Host ("   • Skip confirmation: {0}" -f $SkipConfirmation) -ForegroundColor White
+    
+    Write-Host "`n📦 Selected packages:" -ForegroundColor Cyan
+    $SelectedPackages | Group-Object Category | ForEach-Object {
+        Write-Host "   $($_.Name):" -ForegroundColor Yellow
+        $_.Group | ForEach-Object { Write-Host "     • $($_.Display)" -ForegroundColor Gray }
+    }
     
     if (-not $SkipConfirmation) {
         Write-Host "`n❓ " -NoNewline -ForegroundColor Yellow
@@ -355,21 +483,23 @@ try {
         
         $exitCode = Install-Package -PackageName $package.Name
         
-        if ($exitCode -eq 0) {
-            $Stats.Successful++
-            Write-Host "`n✓ Successfully installed: $($package.Display)" -ForegroundColor Green
-        }
-        elseif ($exitCode -eq -1978335189) {
-            $Stats.Skipped++
-            Write-Host "`n⊘ Already installed: $($package.Display)" -ForegroundColor Yellow
-        }
-        else {
-            $Stats.Failed++
-            Write-Host "`n✗ Failed to install: $($package.Display) (Exit code: $exitCode)" -ForegroundColor Red
-            
-            if (-not $ContinueOnError) {
-                Write-Host "Stopping installation due to error. Use -ContinueOnError to skip failures." -ForegroundColor Yellow
-                break
+        switch ($exitCode) {
+            0 {
+                $Stats.Successful++
+                Write-Host "`n✓ Successfully installed: $($package.Display)" -ForegroundColor Green
+            }
+            -1978335189 {
+                $Stats.Skipped++
+                Write-Host "`n⊘ Already installed: $($package.Display)" -ForegroundColor Yellow
+            }
+            default {
+                $Stats.Failed++
+                Write-Host "`n✗ Failed to install: $($package.Display) (Exit code: $exitCode)" -ForegroundColor Red
+                
+                if (-not $ContinueOnError) {
+                    Write-Host "Stopping installation due to error. Use -ContinueOnError to skip failures." -ForegroundColor Yellow
+                    break
+                }
             }
         }
         
@@ -378,15 +508,19 @@ try {
     
     Show-InstallationSummary
     
+    Write-Host "`n💡 Post-installation tips:" -ForegroundColor Blue
     if ($fontInstalled) {
-        Write-Host "`n💡 Tip: Restart Windows Terminal to see the new CascadiaCode Nerd Font!" -ForegroundColor Blue
+        Write-Host "   • Restart Windows Terminal to see the new CascadiaCode Nerd Font" -ForegroundColor Gray
     }
+    Write-Host "   • Some applications may require a system restart to function properly" -ForegroundColor Gray
+    Write-Host "   • Check Windows Terminal settings to configure your preferred font" -ForegroundColor Gray
     
     Write-Host "`n🎉 Installation process completed!" -ForegroundColor Green
     Write-Host "Thank you for using Rocmine Program Installer!" -ForegroundColor Magenta
 }
 catch {
     Write-Host "`n💥 Critical error occurred: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Stack trace: $($_.ScriptStackTrace)" -ForegroundColor DarkRed
     exit 1
 }
 finally {
