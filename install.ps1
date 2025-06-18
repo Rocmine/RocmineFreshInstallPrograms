@@ -358,10 +358,12 @@ if (`$Host.UI.RawUI.WindowTitle -notlike "*ISE*") {
 }
 
 # Oh My Posh configuration (if installed)
-try {
-    oh-my-posh init pwsh | Invoke-Expression
-} catch {
-    Write-Warning "Failed to initialize oh-my-posh: $_"
+if (Get-Command oh-my-posh) {
+        try {
+        oh-my-posh init pwsh | Invoke-Expression
+    } catch {
+        Write-Warning "Failed to initialize oh-my-posh: $_"
+    }
 }
 
 Write-Host "PowerShell 7 configured with CaskaydiaCove Nerd Font and telemetry disabled" -ForegroundColor Green
