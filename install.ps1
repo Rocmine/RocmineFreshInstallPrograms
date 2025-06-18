@@ -152,22 +152,22 @@ function Install-Package {
     }
 }
 
-function Install-CascadiaCodeFont {
-    Write-Host "`n🔤 Installing CascadiaCode Nerd Font..." -ForegroundColor Cyan
+function Install-CaskaydiaCoveFont {
+    Write-Host "`n🔤 Installing CaskaydiaCove Nerd Font..." -ForegroundColor Cyan
     
     try {
         # Check if already installed
         $installedFonts = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts" -ErrorAction SilentlyContinue
-        if ($installedFonts -and ($installedFonts.PSObject.Properties | Where-Object { $_.Name -like "*CascadiaCode*" -or $_.Name -like "*CaskaydiaCove*" })) {
-            Write-Host "✓ CascadiaCode Nerd Font already installed" -ForegroundColor Green
+        if ($installedFonts -and ($installedFonts.PSObject.Properties | Where-Object { $_.Name -like "*CaskaydiaCove*" -or $_.Name -like "*CascadiaCode*" })) {
+            Write-Host "✓ CaskaydiaCove Nerd Font already installed" -ForegroundColor Green
             return $true
         }
         
         # Create temp directory
-        $tempDir = Join-Path $env:TEMP "CascadiaCode_$(Get-Random)"
+        $tempDir = Join-Path $env:TEMP "CaskaydiaCove_$(Get-Random)"
         New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
         
-        # Download CascadiaCode Nerd Font
+        # Download CaskaydiaCove Nerd Font
         $fontUrl = "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.1.1/CascadiaCode.zip"
         $tempPath = Join-Path $tempDir "CascadiaCode.zip"
         $extractPath = Join-Path $tempDir "extracted"
@@ -195,9 +195,9 @@ function Install-CascadiaCodeFont {
         Add-Type -AssemblyName System.Drawing
         $fonts = New-Object System.Drawing.Text.PrivateFontCollection
         
-        # Get font files
+        # Get CaskaydiaCove font files specifically
         $fontFiles = Get-ChildItem -Path $extractPath -Filter "*.ttf" -Recurse | Where-Object { 
-            $_.Name -match "(Regular|Bold)" -and $_.Name -notmatch "(Italic|Light|Thin)" 
+            $_.Name -match "CaskaydiaCove.*Nerd.*Font.*(Regular|Bold)" -and $_.Name -notmatch "(Italic|Light|Thin)" 
         }
         
         if ($fontFiles.Count -eq 0) {
@@ -238,42 +238,175 @@ function Install-CascadiaCodeFont {
             # Font registration failed, but files are copied
         }
         
-        # Configure Windows Terminal if available
-        $terminalSettingsPath = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
+function Configure-WindowsTerminal {
+    Write-Host "`n⚙️  Configuring Windows Terminal..." -ForegroundColor Cyan
+    
+    $terminalSettingsPath = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
+    
+    if (-not (Test-Path $terminalSettingsPath)) {
+        Write-Host "   Windows Terminal settings not found, skipping configuration" -ForegroundColor Yellow
+        return $false
+    }
+    
+    try {
+        Write-Host "   Updating Windows Terminal settings..." -ForegroundColor Yellow
+        $settingsContent = Get-Content $terminalSettingsPath -Raw -Encoding UTF8
+        $settings = $settingsContent | ConvertFrom-Json
         
-        if (Test-Path $terminalSettingsPath) {
-            try {
-                Write-Host "   Configuring Windows Terminal..." -ForegroundColor Yellow
-                $settingsContent = Get-Content $terminalSettingsPath -Raw -Encoding UTF8
-                $settings = $settingsContent | ConvertFrom-Json
-                
-                # Ensure defaults exist
-                if (-not $settings.profiles) {
-                    $settings | Add-Member -NotePropertyName "profiles" -NotePropertyValue @{} -Force
+        # Ensure structure exists
+        if (-not $settings.profiles) {
+            $settings | Add-Member -NotePropertyName "profiles" -NotePropertyValue @{} -Force
+        }
+        if (-not $settings.profiles.defaults) {
+            $settings.profiles | Add-Member -NotePropertyName "defaults" -NotePropertyValue @{} -Force
+        }
+        
+        # Configure font for all profiles
+        $fontConfig = @{
+            face = "CaskaydiaCove Nerd Font"
+            size = 11
+            weight = "normal"
+        }
+        
+        $settings.profiles.defaults | Add-Member -NotePropertyName "font" -NotePropertyValue $fontConfig -Force
+        
+        # Also update individual profiles if they exist
+        if ($settings.profiles.list) {
+            foreach ($profile in $settings.profiles.list) {
+                if (-not $profile.font) {
+                    $profile | Add-Member -NotePropertyName "font" -NotePropertyValue $fontConfig -Force
+                } else {
+                    $profile.font.face = "CaskaydiaCove Nerd Font"
                 }
-                if (-not $settings.profiles.defaults) {
-                    $settings.profiles | Add-Member -NotePropertyName "defaults" -NotePropertyValue @{} -Force
-                }
-                
-                # Set the font
-                $settings.profiles.defaults | Add-Member -NotePropertyName "font" -NotePropertyValue @{
-                    face = "CaskaydiaCove Nerd Font"
-                    size = 11
-                } -Force
-                
-                $updatedSettings = $settings | ConvertTo-Json -Depth 10 -Compress:$false
-                Set-Content -Path $terminalSettingsPath -Value $updatedSettings -Encoding UTF8
-            }
-            catch {
-                Write-Host "   Warning: Could not configure Windows Terminal" -ForegroundColor Yellow
             }
         }
+        
+        # Save settings
+        $updatedSettings = $settings | ConvertTo-Json -Depth 10 -Compress:$false
+        Set-Content -Path $terminalSettingsPath -Value $updatedSettings -Encoding UTF8
+        
+        Write-Host "   ✓ Windows Terminal configured successfully" -ForegroundColor Green
+        return $true
+    }
+    catch {
+        Write-Host "   ✗ Failed to configure Windows Terminal: $($_.Exception.Message)" -ForegroundColor Red
+        return $false
+    }
+}
+
+function Configure-PowerShell7 {
+    Write-Host "`n⚙️  Configuring PowerShell 7..." -ForegroundColor Cyan
+    
+    try {
+        # Find PowerShell 7 installation
+        $ps7Paths = @(
+            "$env:ProgramFiles\PowerShell\7\pwsh.exe",
+            "$env:ProgramFiles(x86)\PowerShell\7\pwsh.exe",
+            (Get-Command pwsh -ErrorAction SilentlyContinue).Source
+        ) | Where-Object { $_ -and (Test-Path $_) }
+        
+        if (-not $ps7Paths) {
+            Write-Host "   PowerShell 7 not found, skipping configuration" -ForegroundColor Yellow
+            return $false
+        }
+        
+        $ps7Path = $ps7Paths[0]
+        Write-Host "   Found PowerShell 7 at: $ps7Path" -ForegroundColor Yellow
+        
+        # Create PowerShell profile directory
+        $profilePath = Split-Path $PROFILE.AllUsersAllHosts -Parent
+        if (-not (Test-Path $profilePath)) {
+            New-Item -ItemType Directory -Path $profilePath -Force | Out-Null
+        }
+        
+        # Configure PowerShell profile for font and telemetry
+        $profileContent = @"
+# PowerShell 7 Configuration - Generated by Rocmine Installer
+# Disable telemetry
+`$env:POWERSHELL_TELEMETRY_OPTOUT = 1
+
+# Set console font (for console applications)
+if (`$Host.UI.RawUI.WindowTitle -notlike "*ISE*") {
+    try {
+        # Try to set console font
+        Add-Type -TypeDefinition @"
+            using System;
+            using System.Runtime.InteropServices;
+            public class ConsoleFont {
+                [DllImport("kernel32.dll", SetLastError = true)]
+                public static extern bool SetCurrentConsoleFontEx(IntPtr hConsoleOutput, bool bMaximumWindow, ref CONSOLE_FONT_INFOEX lpConsoleCurrentFontEx);
+                
+                [DllImport("kernel32.dll", SetLastError = true)]
+                public static extern IntPtr GetStdHandle(int nStdHandle);
+                
+                [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+                public struct CONSOLE_FONT_INFOEX {
+                    public uint cbSize;
+                    public uint nFont;
+                    public short dwFontSizeX;
+                    public short dwFontSizeY;
+                    public uint FontFamily;
+                    public uint FontWeight;
+                    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+                    public string FaceName;
+                }
+            }
+"@ -ErrorAction SilentlyContinue
+    } catch {
+        # Font setting failed, continue anyway
+    }
+}
+
+# Oh My Posh configuration (if installed)
+if (Get-Command oh-my-posh -ErrorAction SilentlyContinue) {
+    oh-my-posh init pwsh | Invoke-Expression
+}
+
+Write-Host "PowerShell 7 configured with CaskaydiaCove Nerd Font and telemetry disabled" -ForegroundColor Green
+"@
+        
+        $profileFile = "$profilePath\Microsoft.PowerShell_profile.ps1"
+        Set-Content -Path $profileFile -Value $profileContent -Encoding UTF8
+        
+        Write-Host "   ✓ PowerShell 7 profile configured" -ForegroundColor Green
+        Write-Host "   ✓ Telemetry disabled" -ForegroundColor Green
+        Write-Host "   Profile location: $profileFile" -ForegroundColor Gray
+        
+        return $true
+    }
+    catch {
+        Write-Host "   ✗ Failed to configure PowerShell 7: $($_.Exception.Message)" -ForegroundColor Red
+        return $false
+    }
+}
+
+function Disable-PowerShellTelemetry {
+    Write-Host "`n🚫 Disabling PowerShell telemetry..." -ForegroundColor Cyan
+    
+    try {
+        # Set environment variable for current session
+        $env:POWERSHELL_TELEMETRY_OPTOUT = "1"
+        
+        # Set system-wide environment variable
+        [Environment]::SetEnvironmentVariable("POWERSHELL_TELEMETRY_OPTOUT", "1", "Machine")
+        
+        # Set user environment variable as backup
+        [Environment]::SetEnvironmentVariable("POWERSHELL_TELEMETRY_OPTOUT", "1", "User")
+        
+        Write-Host "   ✓ PowerShell telemetry disabled system-wide" -ForegroundColor Green
+        return $true
+    }
+    catch {
+        Write-Host "   ✗ Failed to disable telemetry: $($_.Exception.Message)" -ForegroundColor Red
+        return $false
+    }
+}
         
         # Cleanup
         Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
         
         if ($installedCount -gt 0) {
-            Write-Host "✓ CascadiaCode Nerd Font installed successfully! ($installedCount files)" -ForegroundColor Green
+            Write-Host "✓ CaskaydiaCove Nerd Font installed successfully! ($installedCount files)" -ForegroundColor Green
             return $true
         } else {
             Write-Host "⚠️  Font files may already be installed" -ForegroundColor Yellow
@@ -281,7 +414,7 @@ function Install-CascadiaCodeFont {
         }
     }
     catch {
-        Write-Host "✗ Failed to install CascadiaCode Nerd Font: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "✗ Failed to install CaskaydiaCove Nerd Font: $($_.Exception.Message)" -ForegroundColor Red
         # Cleanup on error
         if ($tempDir -and (Test-Path $tempDir)) {
             Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -471,8 +604,11 @@ try {
     Write-Host "`n🚀 Starting installation process..." -ForegroundColor Green
     Start-Sleep -Seconds 2
     
-    # Install CascadiaCode Nerd Font first
-    $fontInstalled = Install-CascadiaCodeFont
+    # Install CaskaydiaCove Nerd Font first
+    $fontInstalled = Install-CaskaydiaCoveFont
+    
+    # Disable PowerShell telemetry
+    $telemetryDisabled = Disable-PowerShellTelemetry
     
     $current = 0
     foreach ($package in $SelectedPackages) {
@@ -508,12 +644,32 @@ try {
     
     Show-InstallationSummary
     
-    Write-Host "`n💡 Post-installation tips:" -ForegroundColor Blue
+    # Configure applications
+    Write-Host "`n🔧 Configuring applications..." -ForegroundColor Cyan
+    $terminalConfigured = Configure-WindowsTerminal
+    $ps7Configured = Configure-PowerShell7
+    
+    Write-Host "`n💡 Post-installation summary:" -ForegroundColor Blue
     if ($fontInstalled) {
-        Write-Host "   • Restart Windows Terminal to see the new CascadiaCode Nerd Font" -ForegroundColor Gray
+        Write-Host "   ✓ CaskaydiaCove Nerd Font installed" -ForegroundColor Green
     }
-    Write-Host "   • Some applications may require a system restart to function properly" -ForegroundColor Gray
-    Write-Host "   • Check Windows Terminal settings to configure your preferred font" -ForegroundColor Gray
+    if ($telemetryDisabled) {
+        Write-Host "   ✓ PowerShell telemetry disabled" -ForegroundColor Green
+    }
+    if ($terminalConfigured) {
+        Write-Host "   ✓ Windows Terminal configured with CaskaydiaCove font" -ForegroundColor Green
+    }
+    if ($ps7Configured) {
+        Write-Host "   ✓ PowerShell 7 profile configured" -ForegroundColor Green
+    }
+    
+    Write-Host "`n📝 Important notes:" -ForegroundColor Blue
+    Write-Host "   • Restart Windows Terminal and PowerShell to see font changes" -ForegroundColor Gray
+    Write-Host "   • PowerShell telemetry is now disabled system-wide" -ForegroundColor Gray
+    Write-Host "   • Some applications may require a system restart" -ForegroundColor Gray
+    if ($ps7Configured) {
+        Write-Host "   • PowerShell 7 profile includes Oh My Posh integration" -ForegroundColor Gray
+    }
     
     Write-Host "`n🎉 Installation process completed!" -ForegroundColor Green
     Write-Host "Thank you for using Rocmine Program Installer!" -ForegroundColor Magenta
