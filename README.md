@@ -7,38 +7,16 @@ Quick setup guide for automatically installing essential Windows programs using 
 ### Method 1: Direct Download & Run
 ```powershell
 # Download and run in one command
-iwr -useb https://fresh.rocmine.net/install.ps1 | iex
+iwr -useb https://fresh.rocmine.net/installer.ps1 | iex
 ```
 
 ### Method 2: Download First, Then Run
 ```powershell
 # Download the script
-Invoke-WebRequest -Uri "https://fresh.rocmine.net/install.ps1" -OutFile "install.ps1"
+Invoke-WebRequest -Uri "https://fresh.rocmine.net/installer.ps1" -OutFile "installer.ps1"
 
 # Run the installer
-.\install.ps1
-```
-
-## 🔧 Advanced Usage
-
-### Skip Confirmation Prompt
-```powershell
-.\install.ps1 -SkipConfirmation
-```
-
-### Continue Installing Even If Some Packages Fail
-```powershell
-.\install.ps1 -ContinueOnError
-```
-
-### Exclude Specific Packages
-```powershell
-.\install.ps1 -ExcludePackages @('Discord.Discord', 'Valve.Steam')
-```
-
-### Combine Multiple Options
-```powershell
-.\install.ps1 -SkipConfirmation -ContinueOnError -ExcludePackages @('Docker.DockerDesktop')
+.\installer.ps1
 ```
 
 ## 📋 Prerequisites
@@ -76,4 +54,4 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 ---
 
-*Made with ❤️ by Rocmine | [Report Issues](https://github.com/rocmine/installer)*
+*Made with ❤️ by Rocmine | [Report Issues]([https://github.com/rocmine/installer](https://github.com/Rocmine/RocmineFreshInstallPrograms))*
